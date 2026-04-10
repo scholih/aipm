@@ -2335,3 +2335,509 @@ Add this to each persona's CLAUDE.md so the AI assistant knows the scripts are a
 | Summarize a file | `uv run --directory ~/.claude/sidecar python llm.py summarize <file>` |
 | ... | ... |
 ```
+
+---
+
+## Part 6: Extended Sidecar Candidates
+
+Beyond the core 5 scripts and persona-specific tools, these are high-value additions to consider. Organized by priority — build the ones your personas ask for first.
+
+### Priority 1: High Impact, Low Effort
+
+#### docgen.py — Office Document Generation
+
+**Purpose:** Generate Word documents and PowerPoint presentations from markdown or structured data. Critical for a company where stakeholders expect `.docx` and `.pptx`, not markdown files.
+
+**Who needs it:** Marketing (proposals, one-pagers), CEO (board decks), Solution Architect (architecture documents), CTO (technical presentations)
+
+**CLI Interface:**
+```bash
+docgen.py word <markdown-file>                    # Markdown → Word
+docgen.py word <markdown-file> --template brand.docx  # With branded template
+docgen.py pptx <markdown-file>                    # Markdown → PowerPoint
+docgen.py pptx <data.json> --template deck.pptx   # Data → branded slides
+docgen.py excel <data.csv> --sheet "Q1 Results"   # CSV → formatted Excel
+```
+
+**Dependencies:**
+```bash
+uv add python-docx python-pptx openpyxl
+```
+
+**Key implementation notes:**
+- Store branded templates in the Obsidian vault at `~/reflex-kb/templates/`
+- Support Jinja2-style placeholders in templates: `{{title}}`, `{{date}}`, `{{author}}`
+- For PowerPoint: map markdown headings to slide titles, bullet points to slide content
+- For Word: apply company styles (heading fonts, colors, logos)
+
+**Skeleton:**
+```python
+"""Generate Office documents from markdown or structured data."""
+
+import argparse
+from pathlib import Path
+from docx import Document
+from pptx import Presentation
+
+from core.config import load_config
+
+
+def markdown_to_word(md_path: Path, template_path: Path | None = None) -> Path:
+    """Convert markdown file to Word document."""
+    doc = Document(str(template_path)) if template_path else Document()
+    text = md_path.read_text(encoding="utf-8")
+    # Parse markdown headings → doc.add_heading()
+    # Parse paragraphs → doc.add_paragraph()
+    # Parse tables → doc.add_table()
+    output = md_path.with_suffix(".docx")
+    doc.save(str(output))
+    return output
+
+
+def markdown_to_pptx(md_path: Path, template_path: Path | None = None) -> Path:
+    """Convert markdown file to PowerPoint. Each ## heading = new slide."""
+    prs = Presentation(str(template_path)) if template_path else Presentation()
+    text = md_path.read_text(encoding="utf-8")
+    # Split on ## headings
+    # Each section → slide with title + bullet content
+    output = md_path.with_suffix(".pptx")
+    prs.save(str(output))
+    return output
+
+
+def csv_to_excel(csv_path: Path, sheet_name: str = "Sheet1") -> Path:
+    """Convert CSV to formatted Excel workbook."""
+    import openpyxl
+    from openpyxl.styles import Font, PatternFill
+    # Read CSV, create workbook, format headers
+    output = csv_path.with_suffix(".xlsx")
+    return output
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Generate Office documents")
+    sub = parser.add_subparsers(dest="command")
+
+    word_p = sub.add_parser("word")
+    word_p.add_argument("input", type=Path)
+    word_p.add_argument("--template", type=Path, default=None)
+
+    pptx_p = sub.add_parser("pptx")
+    pptx_p.add_argument("input", type=Path)
+    pptx_p.add_argument("--template", type=Path, default=None)
+
+    excel_p = sub.add_parser("excel")
+    excel_p.add_argument("input", type=Path)
+    excel_p.add_argument("--sheet", default="Sheet1")
+
+    args = parser.parse_args()
+    # dispatch to appropriate function
+```
+
+---
+
+#### translate.py — Dutch ↔ English Translation
+
+**Purpose:** Reflex BV is Dutch but documentation and clients may need English. Translate documents, emails, and content using Ollama — free, private, no data leaves the laptop.
+
+**Who needs it:** Everyone. Dutch company, international clients.
+
+**CLI Interface:**
+```bash
+translate.py <file> --to en                  # Dutch → English
+translate.py <file> --to nl                  # English → Dutch
+translate.py "some text" --to en             # Inline text
+translate.py <file> --to en --formal         # Formal register
+translate.py <file> --to en --preserve-md    # Keep markdown formatting
+```
+
+**Dependencies:**
+```bash
+# No extra deps — uses Ollama via core/ollama_client.py
+```
+
+**Key implementation notes:**
+- Use `default` model (llama3.1:8b) — good enough for translation, fast
+- Chunk long documents to stay within context window (split on paragraphs)
+- `--formal` flag adds "Use formal business register" to the prompt
+- `--preserve-md` instructs the model to keep markdown syntax intact
+- Auto-detect source language if not specified
+
+**Skeleton:**
+```python
+"""Translate text between Dutch and English using local Ollama."""
+
+import argparse
+from pathlib import Path
+
+from core.config import load_config
+from core.ollama_client import OllamaClient
+
+
+TRANSLATE_PROMPT = """Translate the following {source} text to {target}.
+{register}
+Preserve all formatting. Only output the translation, nothing else.
+
+Text:
+{text}"""
+
+
+def detect_language(text: str, client: OllamaClient) -> str:
+    """Detect if text is Dutch or English."""
+    response = client.generate(
+        "Is this text Dutch or English? Reply with only 'nl' or 'en'.",
+        context=text[:500],
+        model="fast",
+    )
+    return response.strip().lower()
+
+
+def translate(
+    text: str,
+    target: str,
+    client: OllamaClient,
+    formal: bool = False,
+) -> str:
+    """Translate text to target language."""
+    source = "Dutch" if target == "en" else "English"
+    target_lang = "English" if target == "en" else "Dutch"
+    register = "Use formal business register." if formal else ""
+
+    return client.generate(
+        TRANSLATE_PROMPT.format(
+            source=source, target=target_lang, register=register, text=text
+        ),
+        model="default",
+    )
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Translate Dutch ↔ English")
+    parser.add_argument("input", help="File path or text string")
+    parser.add_argument("--to", required=True, choices=["en", "nl"])
+    parser.add_argument("--formal", action="store_true")
+    parser.add_argument("--preserve-md", action="store_true")
+    args = parser.parse_args()
+
+    config = load_config()
+    client = OllamaClient(config)
+
+    input_path = Path(args.input)
+    if input_path.exists():
+        text = input_path.read_text(encoding="utf-8")
+    else:
+        text = args.input
+
+    result = translate(text, args.to, client, args.formal)
+    print(result)
+```
+
+---
+
+#### email.py — Email Drafting
+
+**Purpose:** Draft professional emails from templates or briefs. Maintains consistent tone across the company.
+
+**Who needs it:** Helpdesk (ticket responses), Marketing (campaigns), CEO (stakeholder comms)
+
+**CLI Interface:**
+```bash
+email.py draft "Follow up on Q1 results" --to "board" --tone formal
+email.py draft <brief.md> --template follow-up --lang nl
+email.py reply <original-email.txt> --tone friendly
+email.py templates                              # List available templates
+```
+
+**Dependencies:**
+```bash
+# No extra deps — uses Ollama via core/ollama_client.py
+```
+
+**Key implementation notes:**
+- Templates stored in `~/reflex-kb/templates/email/` (greeting styles, sign-offs, common structures)
+- `--tone` options: formal, friendly, urgent, internal
+- `--lang` defaults to nl (Dutch company), supports en
+- `reply` mode reads the original email and drafts a contextual response
+- Output includes subject line suggestion
+
+---
+
+### Priority 2: Medium Impact, Medium Effort
+
+#### screenshot.py — Webpage Screenshots
+
+**Purpose:** Capture full-page screenshots of websites for documentation, competitor analysis, and bug reports.
+
+**Who needs it:** Marketing (competitor monitoring), Tester (bug evidence), Subject Expert (product evaluation docs)
+
+**CLI Interface:**
+```bash
+screenshot.py <url>                          # Full page screenshot → PNG
+screenshot.py <url> --viewport 1920x1080     # Specific viewport
+screenshot.py <url> --element ".pricing"     # Screenshot specific CSS element
+screenshot.py --batch urls.txt --output ./shots/  # Batch capture
+screenshot.py <url> --pdf                    # Save as PDF (print layout)
+```
+
+**Dependencies:**
+```bash
+uv add playwright
+# Then install browser binaries (one-time):
+uv run playwright install chromium
+```
+
+**Windows note:** Playwright handles its own browser binaries. No need to install Chrome separately. The `playwright install` command downloads Chromium to a user-local directory.
+
+**Skeleton:**
+```python
+"""Capture webpage screenshots using headless Chromium."""
+
+import argparse
+import asyncio
+from pathlib import Path
+
+from playwright.async_api import async_playwright
+
+
+async def capture(
+    url: str,
+    output: Path | None = None,
+    viewport: tuple[int, int] = (1920, 1080),
+    element: str | None = None,
+    as_pdf: bool = False,
+) -> Path:
+    """Capture a screenshot or PDF of a webpage."""
+    async with async_playwright() as p:
+        browser = await p.chromium.launch()
+        page = await browser.new_page(viewport={"width": viewport[0], "height": viewport[1]})
+        await page.goto(url, wait_until="networkidle")
+
+        if not output:
+            slug = url.split("//")[-1].replace("/", "_")[:50]
+            output = Path(f"{slug}.{'pdf' if as_pdf else 'png'}")
+
+        if as_pdf:
+            await page.pdf(path=str(output))
+        elif element:
+            locator = page.locator(element)
+            await locator.screenshot(path=str(output))
+        else:
+            await page.screenshot(path=str(output), full_page=True)
+
+        await browser.close()
+    return output
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Capture webpage screenshots")
+    parser.add_argument("url")
+    parser.add_argument("--output", type=Path, default=None)
+    parser.add_argument("--viewport", default="1920x1080")
+    parser.add_argument("--element", default=None)
+    parser.add_argument("--pdf", action="store_true")
+    args = parser.parse_args()
+
+    w, h = map(int, args.viewport.split("x"))
+    result = asyncio.run(capture(args.url, args.output, (w, h), args.element, args.pdf))
+    print(f"Saved: {result}")
+```
+
+---
+
+#### ocr.py — Text Extraction from Images and Scanned PDFs
+
+**Purpose:** Extract text from scanned documents, photos of whiteboards, screenshots. Essential for a workplace management company that deals with physical access systems and hardware documentation.
+
+**Who needs it:** Helpdesk (scanned tickets/forms), Subject Expert (hardware spec sheets), Tester (screenshot text extraction)
+
+**CLI Interface:**
+```bash
+ocr.py <image.png>                           # Extract text from image
+ocr.py <scanned.pdf>                         # Extract text from scanned PDF
+ocr.py <image.png> --lang nld+eng            # Dutch + English OCR
+ocr.py <image.png> --json                    # Output structured blocks with confidence
+ocr.py <dir/> --batch --output results.txt   # Batch OCR a directory
+```
+
+**Dependencies:**
+```bash
+uv add pytesseract Pillow pdf2image
+# System dependency — install Tesseract OCR:
+# winget: winget install UB-Mannheim.TesseractOCR
+# choco:  choco install tesseract -y
+# Also install Dutch language pack:
+# Download nld.traineddata from https://github.com/tesseract-ocr/tessdata
+# Place in Tesseract tessdata directory
+```
+
+**Windows note:** Tesseract installs to `C:\Program Files\Tesseract-OCR\`. You may need to add it to PATH or set `TESSERACT_CMD` env var. pdf2image requires poppler — install via `choco install poppler` or download binaries.
+
+---
+
+#### diff.py — Document Comparison
+
+**Purpose:** Compare two versions of a document, spec, or config and highlight changes. More useful than `git diff` for non-code documents (Word, markdown, structured data).
+
+**Who needs it:** Tester (spec change tracking), Architect (design revision comparison), CTO (policy/config changes)
+
+**CLI Interface:**
+```bash
+diff.py <old.md> <new.md>                    # Side-by-side markdown diff
+diff.py <old.md> <new.md> --summary          # AI-generated change summary
+diff.py <old.docx> <new.docx>               # Word document comparison
+diff.py <old.json> <new.json> --semantic     # Structural JSON diff (ignores formatting)
+diff.py <old.md> <new.md> --html report.html # Visual HTML diff report
+```
+
+**Dependencies:**
+```bash
+uv add deepdiff python-docx
+# For HTML output:
+uv add jinja2
+```
+
+**Key implementation notes:**
+- `--summary` uses Ollama to generate a plain-language description of what changed and why it matters
+- Word document comparison: extract text from both `.docx` files, then diff the text
+- `--semantic` for JSON/YAML: uses `deepdiff` to compare structure, ignoring key order and whitespace
+- HTML report: generates a visual side-by-side view with red/green highlighting
+
+---
+
+#### embed.py — Embedding Generation for Knowledge Base
+
+**Purpose:** Generate vector embeddings for Obsidian vault content, enabling semantic search across the knowledge base. Powers the `kb-search.py` helpdesk tool and Smart Connections plugin.
+
+**Who needs it:** System-level (runs on schedule), Helpdesk (via kb-search.py), everyone (via Obsidian Smart Connections)
+
+**CLI Interface:**
+```bash
+embed.py index ~/reflex-kb/                  # Index entire vault
+embed.py index ~/reflex-kb/ --incremental    # Only new/changed files
+embed.py search "visitor management badge reader" --top 5  # Semantic search
+embed.py similar <note.md> --top 3           # Find similar notes
+```
+
+**Dependencies:**
+```bash
+uv add ollama chromadb
+# Uses nomic-embed-text model via Ollama (already installed)
+```
+
+**Key implementation notes:**
+- Store embeddings in ChromaDB (local, file-based — no server needed)
+- Database location: `~/reflex-kb/.embeddings/` (gitignored)
+- Chunk markdown files by heading sections, not arbitrary token counts
+- Incremental indexing: check file modification time vs. last indexed time
+- This is the backbone of the knowledge base AI layer — invest in getting chunking right
+
+---
+
+### Priority 3: Nice to Have
+
+#### calendar.py — Meeting Preparation
+
+**Purpose:** Pull upcoming meetings and generate briefing notes with relevant context from the knowledge base and beads.
+
+**Who needs it:** CEO (board prep), CTO (architecture reviews), Marketing (campaign reviews)
+
+**CLI Interface:**
+```bash
+calendar.py today                            # Today's meetings with context
+calendar.py prep "Architecture Review"       # Generate briefing for specific meeting
+calendar.py week --summary                   # Week overview
+```
+
+**Dependencies:**
+```bash
+uv add O365  # Microsoft Graph API client
+# Requires Azure AD app registration for calendar access
+```
+
+**Note:** This is the most complex integration because it requires Azure AD setup. Defer until the team has appetite for Microsoft Graph API integration.
+
+---
+
+#### monitor.py — Competitor & Market Monitoring
+
+**Purpose:** Periodically check competitor websites, product pages, and industry news for changes. Alert when something significant changes.
+
+**Who needs it:** Marketing (competitor tracking), Subject Expert (product landscape), CTO (technology trends)
+
+**CLI Interface:**
+```bash
+monitor.py add <url> --label "Competitor X pricing"  # Add URL to watch list
+monitor.py check                                      # Check all watched URLs for changes
+monitor.py check --since 7d                           # Changes in last 7 days
+monitor.py report                                     # AI summary of all recent changes
+```
+
+**Dependencies:**
+```bash
+uv add httpx beautifulsoup4 deepdiff
+# Uses fetch.py under the hood
+```
+
+**Key implementation notes:**
+- Store snapshots in `~/reflex-kb/monitoring/snapshots/` (gitignored — can be large)
+- Watch list in `~/reflex-kb/monitoring/watchlist.toml`
+- Use `diff.py --summary` to generate AI change summaries
+- Can run as a scheduled task (Windows Task Scheduler) for automated monitoring
+
+---
+
+#### notify.py — Cross-Platform Notifications
+
+**Purpose:** Send notifications from sidecar scripts to the user via system tray, email, or Slack. Useful for long-running tasks or monitoring alerts.
+
+**Who needs it:** System-level (called by other scripts)
+
+**CLI Interface:**
+```bash
+notify.py "Build complete" --title "Sidecar"              # Windows toast notification
+notify.py "New competitor pricing detected" --slack #alerts  # Slack message
+notify.py "Weekly report ready" --email marcel@reflex.nl   # Email
+```
+
+**Dependencies:**
+```bash
+uv add win10toast-click  # Windows notifications
+uv add slack-sdk         # Slack integration
+```
+
+---
+
+## Extended Quick Reference
+
+### All Sidecar Scripts (Core + Persona + Extended)
+
+| Script | Category | Priority | Dependencies | Disk Impact |
+|--------|----------|----------|-------------|-------------|
+| fetch.py | Core | Shipped | httpx, bs4 | ~1MB |
+| llm.py | Core | Shipped | ollama | ~1MB |
+| data.py | Core | Shipped | duckdb, pandas | ~50MB |
+| diagram.py | Core | Shipped | graphviz | ~20MB |
+| pdf.py | Core | Shipped | weasyprint | ~30MB |
+| docgen.py | Extended P1 | Build first | python-docx, python-pptx | ~5MB |
+| translate.py | Extended P1 | Build first | (uses ollama) | ~0MB |
+| email.py | Extended P1 | Build first | (uses ollama) | ~0MB |
+| screenshot.py | Extended P2 | Build second | playwright | ~200MB (Chromium) |
+| ocr.py | Extended P2 | Build second | pytesseract, Pillow | ~50MB + Tesseract |
+| diff.py | Extended P2 | Build second | deepdiff | ~5MB |
+| embed.py | Extended P2 | Build second | chromadb | ~100MB |
+| calendar.py | Extended P3 | When ready | O365 | ~5MB |
+| monitor.py | Extended P3 | When ready | (uses fetch.py) | ~0MB |
+| notify.py | Extended P3 | When ready | win10toast, slack-sdk | ~5MB |
+
+### Who Gets What (Extended Matrix)
+
+| Persona | Core Scripts | Persona Custom | Extended Candidates |
+|---------|-------------|----------------|-------------------|
+| Developer | all 5 | — | all (for building/testing) |
+| Subject Expert | fetch, llm, diagram | evaluate.py | ocr, screenshot, diff |
+| Solution Architect | fetch, llm, diagram, data | adr.py | docgen, diff, embed |
+| Tester | llm | testgen.py, bugreport.py | screenshot, ocr, diff |
+| Helpdesk | fetch, llm | kb-search.py, draft-response.py | ocr, translate, email |
+| Marketing | fetch, llm | content.py, competitor.py | docgen, screenshot, translate, monitor |
+| CEO | llm, data | briefing.py | docgen, translate, email, calendar |
+| CTO | llm, diagram, data | techradar.py | docgen, diff, monitor |
