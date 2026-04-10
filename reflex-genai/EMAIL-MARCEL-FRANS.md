@@ -28,10 +28,13 @@ Dit is een eerste opzet. Ik heb geen Windows machine, dus alles is **ongetest op
 **Repo:** Ik heb alles in een publieke GitHub repo gezet zodat jullie developers er direct mee aan de slag kunnen. Link volgt zodra het live staat.
 
 **Volgende stappen:**
-1. Marcel: laat een developer de installer testen op een Windows 11 laptop
-2. Kijk samen of de persona-indelingen kloppen — past het bij hoe jullie werken?
-3. Kies een pilot-groep (bijv. 2-3 mensen) om mee te starten
-4. Na validatie: uitrol naar de rest van het team
+1. **Voor dinsdag:** Bekijk de repo alvast zodat jullie een beeld hebben van de opzet. Aanstaande dinsdag ontmoet ik Alex (de developer) voor het eerst — het zou goed zijn als hij de repo ook al heeft bekeken, zodat we direct inhoudelijk kunnen doorpakken.
+2. Marcel: laat Alex de installer testen op een Windows 11 laptop als eerste actie
+3. Kijk samen of de persona-indelingen kloppen — past het bij hoe jullie werken?
+4. Kies een pilot-groep (bijv. 2-3 mensen) om mee te starten
+5. Na validatie: uitrol naar de rest van het team
+
+**Repo:** https://github.com/scholih/aipm — het staat publiek zodat iedereen er direct bij kan.
 
 Vragen of feedback? Laat het weten. Ik help graag mee bij het finetunen.
 
